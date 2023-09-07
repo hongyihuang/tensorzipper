@@ -14,6 +14,8 @@ import requests
 import pickle
 import gzip
 import time
+import io
+import os
 
 import serial
 
@@ -33,12 +35,21 @@ x_train = m(x_train.reshape((50000, 28, 28))).reshape((50000, 14 * 14))
 x_valid = m(x_valid.reshape((10000, 28, 28))).reshape((10000, 14 * 14))
 '''
 
+def exportCArray(bitstream):
+  buf = io.StringIO()
+  buf.write('{')
+  buf.write(', '.join(map(hex, bitstream)))
+  buf.write('}')
+  retObj = buf.getvalue()
+  buf.close()
+  return retObj
+
 class App(tk.Tk):
     def __init__(self):
         tk.Tk.__init__(self)
         self.x = self.y = 0
         
-        self. scale = 28
+        self.scale = 28
         self.npframe = np.zeros((14, 14), dtype=np.uint8)
         #mnistImg = (x_train[0].reshape(14, 14).detach().numpy()*255).astype(np.uint8)
         self.upsampled = self.npframe.repeat(self.scale, axis = 0).repeat(self.scale, axis = 1)
@@ -62,7 +73,9 @@ class App(tk.Tk):
         self.classify_btn.grid(row=1, column=1, pady=2, padx=2)
         self.clear_btn.grid(row=1, column=0, pady=2)
 
-        self.ser = serial.Serial('/dev/cu.usbmodem112301')  # open serial port
+        self.ser = serial.Serial('/dev/tty.usbserial-112201', 9600, timeout = None)  # open serial port
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
         print("Currently Using: ", self.ser.name)         # check which port was really used
 
     def __del__(self):
@@ -94,11 +107,37 @@ class App(tk.Tk):
         lasx, lasy = event.x, event.y
 
     def classify(self):
-        # send data to chip
-        self.ser.write(self.npframe.tobytes())
-        # time.sleep(1)
+        arr = exportCArray(self.npframe.flatten() >> 6)
+        print(arr)
+        print(len(arr))
+
+        cmd = "riscv64-unknown-elf-gdb --command=./script.gdb /Users/hongyihuang/Documents/GitHub/BearlyML/Baremetal-IDE/workspace/build/firmware.elf > out.txt"
+        f = open("script.gdb", "w") #overwrite
+        f.write("target extended-remote localhost:3333\n")
+        #f.write("load /Users/hongyihuang/Documents/GitHub/BearlyML/Baremetal-IDE/workspace/build/firmware.elf\n")
+        f.write("set $pc=0x20000000\n")
+        f.write("b getMNIST_UART\n")
+        f.write("run\n")
+        f.write("step\n")
+        f.write("step\n")
+        f.write("set var buf = " + arr + "\n")
+        f.write("continue\n")
+        f.write("quit\n")
+        f.close()
+
+        # run script
+        os.system(cmd)
+
+        rdy = self.ser.read(3)
+        print(rdy)        
+
         # recieve inference result
-        self.label.configure(text=self.ser.read())
+        result = self.ser.read(1)
+        while (len(result) != 1):
+            result = self.ser.read(1)
+        print("Result: ")
+        print(result)
+        self.label.configure(text = str(result[0]))
 
     def clear(self):
         self.npframe = np.zeros((14, 14), dtype=np.uint8)
