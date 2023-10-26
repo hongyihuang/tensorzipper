@@ -91,6 +91,8 @@ def compress_nparr(nparr, bins):
   Input: 
   nparr - array to be compressed symmetrically
   bins - the number of bins to quantize
+  Output: 
+  buffer of bytes
   '''
   # 1. Generate byte bins & symbol count to pass into
   (hist, t) = np.histogram(nparr, bins = bins)
@@ -112,7 +114,10 @@ def compress_nparr(nparr, bins):
   assert(np.sum(hist) == 256)
 
   # 2. Transform the input into uint8
+  print(nparr)
   new_nparr = nparr.flatten() - np.min(nparr)
+  print(new_nparr)
+  print(np.min(nparr), np.max(nparr))
   print(np.min(new_nparr), np.max(new_nparr))
 
   # 3. Compress

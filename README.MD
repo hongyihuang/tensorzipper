@@ -2,18 +2,8 @@ TensorZipper is a minimal neural net inference framework with built in compressi
 
 This open source version intends to be a general starting point to demonstrate the capabilities of a neural network codec. 
 
-[TODO] 0.0.1
-Basic OP Codes (Maximum of 32)
-[TODO]
+To run the demo, open `/runtime/esp32-s3/cifar-10-fc` folder in arduino-ide and upload it to esp32 chips.
 
-Compression Modes (4)
-1. Dense
-2. Huffman Code
-3. Asymmetrical Numerical System
-4. Custom Extension (use string to match)
+Train the model in `cifar-10-fully-connected.py`, load weights & biases using `cifar-10-load.py` to `runtime/esp32-s3/cifar-10-fc/cifar-10-fc.h` file to be consumed by C runtime, and evaluate the compute results in `cifar-10-eval.py` to check compute accuracy.
 
-Quantization Modes (4)
-1. int8
-2. fp8
-3. bf16
-4. Custom Extension (use string to match)
+We are currently fixing some bugs to improve benchmark performance, please stay tuned. 
