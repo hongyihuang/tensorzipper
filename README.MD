@@ -1,3 +1,5 @@
+![image](./logopng.png)
+
 TensorZipper is a minimal neural net inference framework with built in compression management. It has a Python compiler based on PyTorch that exports a compressed bitstream file and a C/C++ runtime that can be ported to various platforms. 
 
 This open source version intends to be a general starting point to demonstrate the capabilities of a neural network codec. 
