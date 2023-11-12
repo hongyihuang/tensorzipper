@@ -53,15 +53,18 @@ def main():
     model = torch.load(PATH)
     model.eval()
 
+    S1 = model.quant.scale.item()
+    S2 = model.quant2.scale.item()*2 # RELU, on pytorch uses uint8 but we don't have zero point support, so 256->128
+    S3 = model.quant3.scale.item()*2
     def quantizeInt16(n):
         return np.round(n*(2**16)).astype(np.int16)
     
-    M1 = (model.quant.scale * model.fc1.weight().q_scale()*16 / model.quant2.scale).item()
-    M2 = (model.quant2.scale * model.fc2.weight().q_scale()*16 / model.quant3.scale).item()
-    M3 = (model.quant3.scale * model.fc3.weight().q_scale()*16).item()
+    M1 = (S1 * model.fc1.weight().q_scale()*16 / S2)
+    M2 = (S2 * model.fc2.weight().q_scale()*16 / S3)
+    M3 = (S3 * model.fc3.weight().q_scale()*16)
 
-    b_1 = np.round(model.fc1.bias().detach().numpy() / model.quant2.scale.item()).astype(np.int8)
-    b_2 = np.round(model.fc2.bias().detach().numpy() / model.quant3.scale.item()).astype(np.int8)
+    b_1 = np.round(model.fc1.bias().detach().numpy() / S2).astype(np.int8)
+    b_2 = np.round(model.fc2.bias().detach().numpy() / S3).astype(np.int8)
     b_3 = np.round(model.fc3.bias().detach().numpy()).astype(np.int8)
 
     print("M values: ", round(M1*(2**16)), round(M2*(2**16)), round(M3*(2**16)))
@@ -104,9 +107,9 @@ def main():
     f.write(Mstr.format("M3", quantizeInt16(M3)))
 
     Mstr = "const static uint16_t {} = {};\n"
-    f.write(Mstr.format("S1", round(1/model.quant.scale[0].item())))
-    f.write(Mstr.format("S2", round(1/model.quant2.scale[0].item())))
-    f.write(Mstr.format("S3", round(1/model.quant3.scale[0].item())))
+    f.write(Mstr.format("S1", round(1/S1)))
+    f.write(Mstr.format("S2", round(1/S2)))
+    f.write(Mstr.format("S3", round(1/S3)))
 
     arrayStr = "const static int8_t {}[{}] = {};\n"
     f.write(arrayStr.format("fc1_b", len(b_1), exportCArray(b_1)))

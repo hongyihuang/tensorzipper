@@ -1,27 +1,28 @@
+#ifndef NANOTORCH_H
+#define NANOTORCH_H
+
+#include <stdlib.h>
+#include "ans.h"
+//#include <stddef.h>
+
 typedef struct{
     size_t cols;
     int8_t *data;
 } Matrix;
 
-int8_t dotp(int8_t *a, int8_t *b, int n) {
-    int8_t rst = 0;
-    int i;
+/*
+Dot product int8_t array a and b with length n
+Accumulation has int32_t precision 
+return a single int16_t number shifted right by s
+*/ 
+int16_t dotp_8_32_16(int8_t *a, int8_t *b, int n, uint8_t s);
 
-    // Loop unrolling: Process four elements in a single loop iteration
-    for (i = 0; i <= n - 4; i+=4) {
-        rst += a[i] * b[i] + a[i+1] * b[i+1] + a[i+2] * b[i+2] + a[i+3] * b[i+3];
-    }
+void FC_int8(int8_t *x, Matrix w, int8_t *b, int8_t M, int16_t *rst, int8_t n, uint8_t s);
 
-    // Handle remaining elements
-    for (; i < n; i++) {
-        rst += a[i] * b[i];
-    }
+void fc(tzip *file, int16_t M, int8_t* w, const int8_t* b, int8_t* x, int8_t* y, size_t x_size, size_t y_size, size_t (*zipFunc)(tzip*, int8_t*, size_t));
 
-    return rst;
-}
+void fcRELU(tzip *file, int16_t M, int8_t* w, const int8_t* b, int8_t* x, int8_t* y, size_t x_size, size_t y_size, uint16_t S, size_t (*zipFunc)(tzip*, int8_t*, size_t));
 
-void FC(int8_t *x, Matrix w, int8_t *b, int8_t M, int8_t *rst, int8_t n) {
-    for (int i = 0; i < w.cols; i++) {
-        rst[i] = M * (dotp(x, &w.data[i*n], n)) + b[i];
-    }
-}
+void printArr(int8_t *arr, size_t size, size_t cutoff);
+
+#endif

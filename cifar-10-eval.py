@@ -11,6 +11,7 @@ from pysrc.torchQuant import Q_int8
 from tqdm import tqdm
 
 PATH = "./data/weights/cifar-fc.pt"
+BITS = 16
 
 class FCQuantNet(nn.Module):
     def __init__(self):
@@ -80,7 +81,7 @@ def main():
     print(outputs)
     print(classes[predicted[0]])
 
-    # TODO PYTHONIZE THE C ALGORITHM, CHECK AGAINST PYTORCH
+    # PYTHONIZED C ALGORITHM, CHECK AGAINST PYTORCH
     print("INPUT: ")
     print(model.quant(image.view(-1, 3*32*32)))
     print(model)
@@ -95,6 +96,7 @@ def main():
     fc1 = np.minimum(7, fc1)
     fc1 = np.maximum(-8, fc1)
     print(fc1.shape)
+    print("Nonzeros:", np.count_nonzero(fc1))
 
     fcMul = (fc1 @ input.transpose()).transpose()
 
@@ -109,7 +111,7 @@ def main():
     M1 = round(M1*(2**16))
     b_1 = np.round(model.fc1.bias().detach().numpy() / model.quant2.scale.item()).astype(np.int8)
 
-    ourResults = (((fcMul*M1)>>16) + b_1)
+    ourResults = ((((fcMul << 0)*M1)>>BITS) + b_1)
     ourResults = np.maximum(0, ourResults)
     ourResults = np.minimum(round(6 / model.quant2.scale.item()), ourResults)
 
@@ -129,7 +131,7 @@ def main():
     
     layer = model.fc2
     fc2 = np.round(layer.weight().dequantize().detach().numpy() / layer.weight().q_scale() / 16).astype(np.int32)
-    ourResults = (((fc2 @ ourResults.transpose()).transpose()*M2)>>16) + b_2
+    ourResults = ((((fc2 @ ourResults.transpose()).transpose() << 0)*M2)>>BITS) + b_2
     ourResults = np.maximum(0, ourResults)
     ourResults = np.minimum(round(6 / model.quant3.scale.item()), ourResults)
     
@@ -149,12 +151,15 @@ def main():
 
     layer = model.fc3
     fc3 = np.round(layer.weight().dequantize().detach().numpy() / layer.weight().q_scale() / 16).astype(np.int32)
-    ourResults = (((fc3 @ ourResults.transpose()).transpose()*M3)>>16) + b_3
+    ourResults = (((fc3 @ ourResults.transpose()).transpose()*M3)>>BITS) + b_3
     
     print(ourResults[0])
 
     diff = h3.dequantize().numpy() - (ourResults)
     print("Avg diff: ", np.sum(np.abs(diff))/1000)
+    print("M1 = ", M1)
+    print("M2 = ", M2)
+    print("M3 = ", M3)
 
 if __name__ ==  '__main__':
     main()
