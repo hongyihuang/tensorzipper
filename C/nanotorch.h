@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include "ans.h"
+#include "arch.h"
 //#include <stddef.h>
 
 typedef struct{

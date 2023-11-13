@@ -8,8 +8,6 @@
 #include "nanotorch.h"
 #include "cifar-10-fc-runtime.h"
 
-//#include "ans.h"
-
 /*
 Things to wait:
 1. Refactor the python code and move the toolchain local.
@@ -28,72 +26,71 @@ File Layout
 - mnist: data, weights, and helper func (ascii art and uart load)
 */
 
-/*
-MNIST Spec
-Data 14*14 = 196
-hidden_dim = 64
-Data size = 32
-*/
-
-//uint8_t data[196], hidden_act[64], w_buf[196], out[10];
-
-/*
-Estimated memory footprint:
-196*8 = 1568B
-196 = 
-*/
-
-double elapsed(struct timeval begin, struct timeval end) {
-  long seconds = end.tv_sec - begin.tv_sec;
-  long microseconds = end.tv_usec - begin.tv_usec;
-  return seconds + microseconds*1e-6;
-}
-
 void memPerf() {
-  int8_t *test = (int8_t*)malloc(1024*1024*16);
-  char buf[128];
+  volatile int8_t *test = (int8_t*)malloc(1024*1024*16);
+  volatile int32_t *test32 = (int32_t*)test;
+  
   if (test == NULL) {
     PRINT("memPerf failed to malloc");
     return;
   }
   int64_t content = 0;
-  struct timeval begin, end;
-  double secs;
 
-  gettimeofday(&begin, 0);
-  for (int i = 0; i<1024*1024*16; i++) {
+  printf("32 Million Params in Int4:\n");
+  beginms(TWRITE_TIME_ID);
+  for (int i = 0; i<1024*1024*16; i++)
     *(test+i) = i;
+
+  endms(TWRITE_TIME_ID);
+  printms(TWRITE_TIME_ID);
+
+  printf("32 Million Params in Int16:\n");
+  beginms(TWRITE_TIME_ID);
+  for (int j = 0; j < 4*4; j++) {
+    for (int i = 0; i<1024*1024*16/4; i++) {
+      *(test32+i) = i*j;
+    }
   }
-  gettimeofday(&end, 0);
-  secs = elapsed(begin, end);
-  sprintf(buf, "Write Time: %.3f seconds.\n", secs);
-  PRINT(buf);
+  endms(TWRITE_TIME_ID);
+  printms(TWRITE_TIME_ID);
+  /*
   sprintf(buf, "Cycles per loop: %f\n", secs*3e9/(1024*1024*16));
   PRINT(buf);
   sprintf(buf, "Write MBps: %f\n", 16/secs);
   PRINT(buf);
-  
-  gettimeofday(&begin, 0);
+  */
+  printf("32 Million Params in Int4:\n");
+  beginms(TREAD_TIME_ID);
   for (int i = 0; i<1024*1024*16; i++) {
-    content += (*((volatile int8_t*)test+i) * content);
+    content += (*(test+i) * content);
   }
-  gettimeofday(&end, 0);
-  secs = elapsed(begin, end);
-  sprintf(buf, "Read Time: %.3f seconds.\n", secs);
-  PRINT(buf);
+  endms(TREAD_TIME_ID);
+  printms(TREAD_TIME_ID);
+
+  printf("32 Million Params in Int16:\n");
+  beginms(TREAD_TIME_ID);
+  for (int j = 0; j < 4*4; j++) {
+    for (int i = 0; i<1024*1024*16/4; i++) {
+      content += (*(test32+i) * content);
+    }
+  }
+  endms(TREAD_TIME_ID);
+  printms(TREAD_TIME_ID);
+  /*
   sprintf(buf, "Cycles per loop: %f\n", secs*3e9/(1024*1024*16.0));
   PRINT(buf);
-  sprintf(buf, "Write MBps: %f\n", 16/secs);
+  sprintf(buf, "Read MBps: %f\n", 16/secs);
   PRINT(buf);
+  */
 
   sprintf(buf, "Result %lld \n", content);
   PRINT(buf);
-
+  
   free(test);
 }
 
 int main() {
-  printf("Welcome to TensorZipper, profiling memory bandwidth.\n");
+  printf("Welcome to TensorZipper!\n");
 
   // 1. Make a static memory on stack (SRAM)
   // memcpy(dest, src, size);
@@ -104,9 +101,17 @@ int main() {
 
   cifar_setup();
   check_weights();
-  cifar_compressed();
-  cifar_normal();
 
+  printf("TensorZipper:\n");
+  for (int i = 0; i < 256; i++) cifar_compressed();
+  printms(READ_TIME_ID);
+  printms(PROD_TIME_ID);
+
+  printf("Baseline:\n");
+  for (int i = 0; i < 256; i++) cifar_normal();
+  printms(READ_TIME_ID);
+  printms(PROD_TIME_ID);
+  
   return 0;
 }
 

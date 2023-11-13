@@ -1,5 +1,4 @@
 #include "nanotorch.h"
-#include "ans.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -83,60 +82,18 @@ void fcRELU(tzip *file, int16_t M, int8_t* w, const int8_t* b, int8_t* x, int8_t
   int32_t result;
   int8_t maxResult = MIN(127, 6*S);
   
-  printf("6*S = %d \n", 6*S);
-
   for (int i = 0; i < y_size; i++) {
-    //asm volatile("esync; rsr %0,ccount":"=a" (startCounter));
+    beginms(READ_TIME_ID);
     zipFunc(file, w, x_size);
-    result = dotp_8_32_16(x, w, x_size, RESULT_SHIFT);
-    //asm volatile("esync; rsr %0,ccount":"=a" (endCounter));
-    //inflateCounter += endCounter - startCounter;
-
-    //asm volatile("esync; rsr %0,ccount":"=a" (startCounter));
+    endms(READ_TIME_ID);
     
-    /*
-    Serial.print("y[");
-    Serial.print(i);
-    Serial.print("] = ");
-    Serial.print(x[0]);
-    Serial.print(" * ");
-    Serial.print(w[0]);
-    Serial.print(" + ");
-    Serial.print(x[1]);
-    Serial.print(" * ");
-    Serial.print(w[1]);
-    Serial.print(" + ");
-    Serial.print(x[2]);
-    Serial.print(" * ");
-    Serial.print(w[2]);
-    Serial.print(" + ... + ");
-    Serial.print(x[x_size-2]);
-    Serial.print(" * ");
-    Serial.print(w[x_size-2]);
-    Serial.print(" + ");
-    Serial.print(x[x_size-1]);
-    Serial.print(" * ");
-    Serial.print(w[x_size-1]);
-    Serial.println();
-    delay(50);
-    */
+    beginms(PROD_TIME_ID);
+    result = dotp_8_32_16(x, w, x_size, RESULT_SHIFT);
+    endms(PROD_TIME_ID);
 
     // Old = [16. 0] * [ 0.16] = [16.16]
     // New = [16. 0]*2^1 * [ 0.16] = [16.16]*2^1
     result = ( ( (((int32_t)result)<<RESULT_SHIFT) * (int32_t)M) >> 16) + ((int32_t)b[i]);
-    
-    /*
-    Serial.print(y[i]);
-    Serial.print(" = ((");
-    Serial.print(result);
-    Serial.print(" * ");
-    Serial.print(M);
-    Serial.print(")>>16) + ");
-    Serial.print(b[i]);
-    Serial.print(";");
-    Serial.println();
-    delay(100);
-    */
     
     if (result > maxResult) {
       result = maxResult;

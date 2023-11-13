@@ -1,10 +1,10 @@
 CC=clang
 CFLAGS=--std=c99 -Wall
 
-main: ans.o nanotorch.o
-	$(CC) $(CFLAGS) -o main main.c ans.o nanotorch.o 
+main: ans.o nanotorch.o arch.o
+	$(CC) $(CFLAGS) -o main main.c ans.o nanotorch.o arch.o
 
-#arch.o cifar-10-fc-runtime.o
+#cifar-10-fc-runtime.o
 
 nanotorch.o: nanotorch.c nanotorch.h
 	$(CC) $(CFLAGS) -c nanotorch.c
@@ -12,8 +12,8 @@ nanotorch.o: nanotorch.c nanotorch.h
 ans.o: ans.c ans.h
 	$(CC) $(CFLAGS) -c ans.c
 
-#arch.o: arch.h
-#	$(CC) $(CFLAGS) -c arch.h
+arch.o: arch.c arch.h
+	$(CC) $(CFLAGS) -c arch.c
 
 #cifar-10-fc-runtime.o: cifar-10-fc-runtime.h
 #	$(CC) $(CFLAGS) -c cifar-10-fc-runtime.h
