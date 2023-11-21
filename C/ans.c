@@ -19,7 +19,7 @@
 +-----+-----+-----+-----+
 */
 
-#ifdef ZIPLUT2
+#if defined(ZIPLUT2)
 size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
     uint16_t state = file->ckpt_state;
     int16_t symbol;
@@ -30,17 +30,37 @@ size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
 
     const uint8_t *data = file->data;
     size_t data_size = file->size;
-
+    uint8_t *inv_f = file->inv_f;
+    uint16_t *next_state = file->next_state;
+    uint32_t t0, t1;
+    
     for (i = 0; i < buf_size; i++) {
-        symbol = file->inv_f[state & 0xFF];
-        state = file->next_state[state];
+        #ifdef ESP32S3
+        asm volatile( 
+            "andi %3, %1, 0xFF \n\t"    //t0 = state & 0xFF
+            "add %3, %3, %5 \n\t"       //inv_f + t0
+            "l16si %2, %5, 0 \n\t"      //symbol = *t0
+            "slli %1, %1, 1 \n\t"       //state = state << 1
+            "add %4, %6, %1 \n\t"       //t1 = next_state + state
+            "l16ui %1, %4, 0 \n\t"      //state = *t1
+            "subi %2, %2, 8 \n\t"       //symbol = symbol - 8;
+            "add %3, %8, %10 \n\t"      //t0 = buf + i;
+            "s8i %2, %3, 0 \n\t"        //*t0 = symbol;
+            ""
+            :"=r"(j), "=r"(state), "=r"(symbol), "=r"(t0), "=r"(t1)
+            :"r"(inv_f), "r"(next_state), "r"(data_size), "r"(buf), "r"(data), "r"(i)
+        );
+        #else
+        symbol = inv_f[state & 0xFF];
+        state = next_state[state];
         buf[i] = symbol - 8;
+        #endif
 
         if ((state < 256) && (j < data_size)) {
             state = (state << 8) + data[j++];
         }
     }
-
+    
     // more to decompress but buffer is full, save checkpoint
     file->ckpt_state = state;
     file->ckpt_offset = j;
@@ -55,19 +75,18 @@ void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size
     file->ckpt_offset = 3;
 
     // {0[8:0], dist[0][8:0]}
-    uint16_t packed_bins[16];
-    packed_bins[0] = dist[0];
+    file->packed_bins[0] = dist[0];
     uint8_t last_dist = dist[0];
     uint8_t cumulative = 0;
     for (size_t k = 1; k < 16; k++) {
         cumulative += last_dist;
         last_dist = dist[k];
-        packed_bins[k] = last_dist | (cumulative<<8);
+        file->packed_bins[k] = last_dist | (cumulative<<8);
     }
 
     uint32_t y = 0;
     for (size_t x = 0; x < 256; x++) {
-        cumulative = packed_bins[y] >> 8;
+        cumulative = file->packed_bins[y] >> 8;
         if (!((x < cumulative) || (y >= 16))) {
             y += 1;
         }
@@ -85,14 +104,15 @@ void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size
     for (uint32_t state = 256; state < 65536u; state++) {
         slot = state;
         symbol = file->inv_f[slot];
-        dist_reg = packed_bins[symbol] & 0xFF;
-        cum_reg = packed_bins[symbol] >> 8;
+        dist_reg = file->packed_bins[symbol] & 0xFF;
+        cum_reg = file->packed_bins[symbol] >> 8;
 
         file->next_state[state] = (state >> 8) * dist_reg + slot - cum_reg;
     }
 }
+#endif
 
-#elif ZIPLUT
+#if defined(ZIPLUT1)
 // ~380 cycles on ESP32s3, 28ms on M1, slightly faster
 size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {    
     uint16_t state = file->ckpt_state;
@@ -157,7 +177,9 @@ void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size
         file->LUT[x] = packed_bins[y-1] | ((y-1)<<16);
     }
 }
-#else
+#endif
+
+#if defined(ZIPLUT0)
 /*
 repeatedly call to unzip the file into buffer
 Returns size of deflated buffer size
@@ -287,6 +309,213 @@ void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size
 }
 #endif
 
+#if defined(ZIPLUT3)
+size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
+    uint16_t state0, state1, state2, state3;
+    int8_t symbol0, symbol1, symbol2, symbol3;
+    // i: counter of decompressed buffer
+    // j: counter of compressed bitstream
+    size_t i;
+    size_t j0, j1, j2, j3;
+
+    j0 = file->ckpt_offset[0];
+    j1 = file->ckpt_offset[1];
+    j2 = file->ckpt_offset[2];
+    j3 = file->ckpt_offset[3];
+    state0 = file->ckpt_state[0];
+    state1 = file->ckpt_state[1];
+    state2 = file->ckpt_state[2];
+    state3 = file->ckpt_state[3];
+
+    const uint8_t *data = file->data;
+    size_t data_size = file->size;
+    uint8_t *inv_f = file->inv_f;
+    uint16_t *next_state = file->next_state;
+    size_t chunksize = buf_size>>UNROLL_BITS;
+    
+    for (i = 0; i < chunksize; i++) {
+        symbol0 = inv_f[state0 & 0xFF];
+        symbol1 = inv_f[state1 & 0xFF];
+        symbol2 = inv_f[state2 & 0xFF];
+        symbol3 = inv_f[state3 & 0xFF];
+
+        state0 = next_state[state0];
+        state1 = next_state[state1];
+        state2 = next_state[state2];
+        state3 = next_state[state3];
+
+        buf[i] = symbol0 - 8;
+        buf[i + chunksize] = symbol1 - 8;
+        buf[i + 2*chunksize] = symbol2 - 8;
+        buf[i + 3*chunksize] = symbol3 - 8;
+
+        // simplified error checking, as long as it doesn't overflow file->data
+        if ((state0 < 256) && (j0 < data_size)) {
+            state0 = (state0 << 8) + data[j0++];
+        }
+        if ((state1 < 256) && (j1 < data_size)) {
+            state1 = (state1 << 8) + data[j1++];
+        }
+        if ((state2 < 256) && (j2 < data_size)) {
+            state2 = (state2 << 8) + data[j2++];
+        }
+        if ((state3 < 256) && (j3 < data_size)) {
+            state3 = (state3 << 8) + data[j3++];
+        }
+    }
+    
+    // save checkpoint
+    file->ckpt_state[0] = state0;
+    file->ckpt_offset[0] = j0;
+    file->ckpt_state[1] = state1;
+    file->ckpt_offset[1] = j1;
+    file->ckpt_state[2] = state2;
+    file->ckpt_offset[2] = j2;
+    file->ckpt_state[3] = state3;
+    file->ckpt_offset[3] = j3;
+
+    return i;
+}
+
+void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size) {
+    // {0[8:0], dist[0][8:0]}
+    file->packed_bins[0] = dist[0];
+    uint8_t last_dist = dist[0];
+    uint8_t cumulative = 0;
+    for (size_t k = 1; k < 16; k++) {
+        cumulative += last_dist;
+        last_dist = dist[k];
+        file->packed_bins[k] = last_dist | (cumulative<<8);
+    }
+
+    uint32_t y = 0;
+    for (size_t x = 0; x < 256; x++) {
+        cumulative = file->packed_bins[y] >> 8;
+        if (!((x < cumulative) || (y >= 16))) {
+            y += 1;
+        }
+        file->inv_f[x] = y-1;
+    }
+
+    uint8_t symbol;
+
+    uint8_t dist_reg, cum_reg, slot;
+
+    for (uint32_t state = 256; state < 65536u; state++) {
+        slot = state;
+        symbol = file->inv_f[slot];
+        dist_reg = file->packed_bins[symbol] & 0xFF;
+        cum_reg = file->packed_bins[symbol] >> 8;
+
+        file->next_state[state] = (state >> 8) * dist_reg + slot - cum_reg;
+    }
+}
+
+/*
+repeatedly call to unzip the file into buffer
+Returns size of inflated buffer size
+*/
+size_t inflateInt4_to_8(tzip* file, int8_t* buf, size_t max_size) {
+    // check last loop boundary conditions satisfies
+    size_t till = MIN(max_size>>1, file->size - file->ckpt_offset[0]);
+
+    if (till != (max_size>>1)) {
+        return 0;
+    } 
+
+    for (size_t i = 0; i < till; i++) {
+        register uint64_t read = file->data[i + (file->ckpt_offset[0])];
+
+        buf[i*2] = (int8_t)((int8_t)read & 0xF) - 8;
+        buf[i*2+1] = (int8_t)((int8_t)(read >> 4) & 0xF) - 8;
+    }
+
+    for (size_t i = 0; i < UNROLL; i++) file->ckpt_offset[i] += till;
+    return till<<1;
+}
+
+size_t inflateInt8_to_8(tzip* file, int8_t* buf, size_t max_size) {
+    size_t till = MIN(max_size, file->size-file->ckpt_offset[0]);
+
+    for (size_t i = 0; i < till; i+=8) {
+        *((uint64_t*) (buf + i)) = *((uint64_t*) ((file->data + i + file->ckpt_offset[0])));
+    }
+    file->ckpt_offset[0] += till;
+    return till;
+}
+
+/* Generates a compressed bitstream for benchmarking. */
+void compress(tzip *file, uint8_t *dist, uint8_t *weights, size_t size) {
+    uint8_t *data = malloc(size);
+    if (data == NULL) {
+        printf("generate: malloc data failed!");
+        exit(0);
+    }
+
+    uint32_t state = 256;
+    uint8_t symbol;
+    size_t j = 0;
+    //size_t tot = 0;
+
+    // loop over in zigzag order
+    printf("Encoding...\n");
+    // loop over n thread-blocks
+    for (size_t i = 0; i < UNROLL; i++) {
+        uint8_t *weights_ptr = weights + size - 1 - i*(file->rows>>UNROLL_BITS);
+        //loop over the block
+        for (size_t k = 0; k < (size>>UNROLL_BITS)/(file->rows>>UNROLL_BITS); k++) {
+            // loop over one row of zigzag pattern
+            for (size_t l = 0; l < file->rows>>UNROLL_BITS; l++) {
+                symbol = *(weights_ptr--); // reversed read in
+                while (state >= (dist[symbol]<<8)) {
+                    data[j++] = state & 0xFF;
+                    state = state >> 8;
+                }
+                state = ((state/dist[symbol])<<8) + (file->packed_bins[symbol] >> 8) + (state % dist[symbol]); 
+                //tot++;
+            }
+            // decrement by stride
+            weights_ptr -= (file->rows>>UNROLL_BITS) * (UNROLL-1);
+        }
+        // save the ckpt state and offset
+        file->ckpt_offset_init[i] = j;
+        file->ckpt_state_init[i] = state;
+        //printf("j = %zu, state = %u\n", j, state);
+    }
+
+    //printf("tot = %zu\n", tot);
+
+    // reverse the buffer by allocating another buffer and reverse it... 
+    printf("Reversing...\n");
+    uint8_t *data_rev = malloc(j);
+    if (data_rev == NULL) {
+        printf("generate: malloc data_rev failed!");
+        exit(0);
+    }
+    // inverting data block
+    for (size_t i = 0; i < j; i++) {
+        data_rev[j-1-i] = data[i];
+    }
+
+    file->size = j;
+    file->data = data_rev;
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
+
+    // invert checkpoint offset coordinates and swap them
+    for (size_t i = 0; i < UNROLL; i++) {
+        file->ckpt_offset[UNROLL-1-i] = j - file->ckpt_offset_init[i];
+        file->ckpt_state[UNROLL-1-i] = file->ckpt_state_init[i];
+    }
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state[i], file->ckpt_offset[i]);
+    for (size_t i = 0; i < UNROLL; i++) {
+        file->ckpt_state_init[i] = file->ckpt_state[i];
+        file->ckpt_offset_init[i] = file->ckpt_offset[i];
+    }
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
+    
+    free(data);
+}
+#else
 /*
 repeatedly call to unzip the file into buffer
 Returns size of deflated buffer size
@@ -327,33 +556,57 @@ size_t inflateInt8_to_8(tzip* file, int8_t* buf, size_t max_size) {
 }
 
 /* Generates a compressed bitstream for benchmarking. */
-void generate(tzip *file, const uint8_t *dist, size_t size) {
-    size_t data_size = 1024*1024; // start with 1MB
-    uint8_t *data = malloc(data_size);
-    init_tzip(file, data, dist, data_size);
+void compress(tzip *file, uint8_t *dist, uint8_t *weights, size_t size) {
+    uint8_t *data = malloc(size);
+    if (data == NULL) {
+        printf("generate: malloc data failed!");
+        exit(0);
+    }
 
     uint32_t state = 256;
     uint8_t symbol;
     size_t j = 0;
 
-    uint16_t lfsr = 0xACE1u;
-
-    // this should be reversed, but if we're just generating an rng test set it doesn't matter
-    for (int i = 0; i < size; i++) {
-        // generate symbol according to frequency, has periodic but good enough
-        lfsr ^= lfsr >> 7;
-        lfsr ^= lfsr << 9;
-        lfsr ^= lfsr >> 13;
-
-        lfsr += lfsr & 0xFF;
-        symbol = lfsr & 0xF;
-
+    printf("Encoding...\n");
+    for (size_t i = 0; i < size; i++) {
+        //printf("%zu-%zu\n", size, i);
+        symbol = weights[size-1-i]; // reversed read in
         while (state >= (dist[symbol]<<8)) {
-            data[j] = state & 0xFF;
+            //printf("%hu %u %u\n", state, dist[symbol], symbol);
+            data[j++] = state & 0xFF;
             state = state >> 8;
         }
-        state = ((state/dist[symbol])<<8) + file->inv_f[symbol] + (state % dist[symbol]); 
+        //printf("state\n");
+        state = ((state/dist[symbol])<<8) + (file->packed_bins[symbol] >> 8) + (state % dist[symbol]); 
     }
 
-    // reverse the buffer
+    // printf("j = %zu, size = %zu \n", j, size);
+
+    // reverse the buffer by allocating another buffer and reverse it... 
+    // plenty of memory usually, just a test so perf doesn't matter
+    printf("Reversing...\n");
+    uint8_t *data_rev = malloc(j+3);
+    if (data_rev == NULL) {
+        printf("generate: malloc data_rev failed!");
+        exit(0);
+    }
+
+    // First 3 bytes is ckpt_state
+    data_rev[2] = state & 0xFF;
+    data_rev[1] = (state>>8) & 0xFF;
+    data_rev[0] = (state>>16) & 0xFF;
+    
+    file->ckpt_state = state;
+
+    for (size_t i = 0; i < j; i++) {
+        data_rev[j-1-i+3] = data[i];
+    }
+
+    file->size = j+3;
+    file->data = data_rev;
+
+    file->ckpt_offset = 3;
+    //file->ckpt_state = (data[0] << 16) + (data[1] << 8) + data[2];
+    free(data);
 }
+#endif

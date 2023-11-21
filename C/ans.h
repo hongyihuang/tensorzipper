@@ -3,18 +3,43 @@
 #include <stdlib.h>
 #include "arch.h"
 
-#ifdef ZIPLUT2
-// DO NOT PUT THIS ON STACK!!!
+#if defined(ZIPLUT3)
+// UNROLL cannot be changed without changing code unrolling
+#define UNROLL 4
+#define UNROLL_BITS 2
+// threads can be changed, it will generate more theads
+// on embedded this is limited to how many physical cores there is
+#define THREADS 1
+
+typedef struct {
+    const uint8_t *data; // [size]
+    size_t size;
+    size_t rows;
+
+    size_t ckpt_offset[THREADS*UNROLL];
+    uint16_t ckpt_state[THREADS*UNROLL];
+
+    size_t ckpt_offset_init[THREADS*UNROLL];
+    uint16_t ckpt_state_init[THREADS*UNROLL];
+
+    uint16_t packed_bins[16]; // 32B
+    uint16_t next_state[65536]; // 128KB
+    uint8_t inv_f[256]; // 0.25KB
+} tzip;
+#endif
+#if defined(ZIPLUT2)
 typedef struct {
     const uint8_t *data; // [size]
     size_t size;
     size_t ckpt_offset;
     uint32_t ckpt_state;
 
+    uint16_t packed_bins[16]; // 32B
     uint16_t next_state[65536]; // 128KB
     uint8_t inv_f[256]; // 0.25KB
 } tzip;
-#elif ZIPLUT 
+#endif
+#if defined(ZIPLUT1)
 typedef struct {
     const uint8_t *data; // [size]
     size_t size;
@@ -29,7 +54,9 @@ typedef struct {
     // Order from low to high: dist(8), cumu(8), inv_f(8) 
     // have 8 extra bits of 0, but avoids boundary crossing
 } tzip;
-#else
+#endif
+
+#if defined(ZIPLUT0)
 typedef struct {
     const uint8_t *data; // [size]
     size_t size;
@@ -58,5 +85,5 @@ size_t unzip(tzip* file, int8_t* buf, size_t buf_size);
 
 void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size);
 
-void generate(tzip *file, const uint8_t *dist, size_t size);
+void compress(tzip *file, uint8_t *dist, uint8_t *data, size_t size);
 #endif

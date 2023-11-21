@@ -4,7 +4,7 @@
 //#define ARDUINO
 //#define ESP32S3
 //#define ZIPLUT
-#define ZIPLUT2
+#define ZIPLUT3
 
 #ifdef ARDUINO
 #include <Arduino.h>

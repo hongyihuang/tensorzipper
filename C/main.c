@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <time.h>
+#include <string.h>
 #include <sys/time.h>
 
 #include "ans.h"
 #include "nanotorch.h"
+#ifndef ZIPLUT3
 #include "cifar-10-fc-runtime.h"
+#endif
 
 /*
 Things to wait:
@@ -89,6 +92,74 @@ void memPerf() {
   free(test);
 }
 
+void generateWeights(tzip *file, uint8_t *data, size_t size) {
+  uint16_t lfsr = 0xACE1u;
+  
+  for (int i = 0; i < size; i++) {
+    lfsr ^= lfsr >> 7;
+    lfsr ^= lfsr << 9;
+    lfsr ^= lfsr >> 13;
+
+    lfsr += lfsr & 0xFF;
+
+    // according to symbol distribution
+    data[i] = file->inv_f[lfsr & 0xF];
+  }
+}
+
+const static uint8_t dist[16] = {1, 1, 2, 4, 10, 22, 55, 69, 54, 23, 9, 3, 1, 1, 1};
+const static size_t RUNS = 32;
+const static size_t SIZE = 1024*2048;
+const static size_t TOTAL_SIZE = RUNS*SIZE;
+
+void memPerf2() {
+  tzip file;
+  uint8_t *data = malloc(TOTAL_SIZE);
+  int8_t *buffer = malloc(SIZE);
+  int8_t *otherBuffer = malloc(SIZE);
+  if (data == NULL) {
+    printf("malloc data failed!");
+    exit(0);
+  }
+
+  printf("Generating %zu Bytes of data\n", TOTAL_SIZE);
+  
+  init_tzip(&file, data, dist, TOTAL_SIZE); //64MB (32x2MB)
+  file.rows = SIZE;
+
+  printf("Generate Weights\n");
+  generateWeights(&file, data, TOTAL_SIZE);
+  printf("Compress\n");
+  compress(&file, dist, data, TOTAL_SIZE);
+
+  printf("File size = %zu\n", file.size);
+  size_t err = 0;
+  for (size_t i = 0; i < RUNS; i++) {
+    beginms(INF_TIME_ID);
+    memcpy(otherBuffer, data+i*SIZE, SIZE);
+    endms(INF_TIME_ID);
+
+    //printf("%hu, %zu\n", file.ckpt_state[0], file.ckpt_offset[0]);
+    beginms(ZIP_TIME_ID);
+    unzip(&file, buffer, SIZE);
+    endms(ZIP_TIME_ID);
+    //printf("%hu, %zu\n", file.ckpt_state[0], file.ckpt_offset[0]);
+
+    for (size_t j = 0; j < SIZE; j++) {
+      if ((buffer[j] + 8) != otherBuffer[j]) {
+        //printf("%zu, %zu\n", i, j);
+        //printf("%u != %u\n", (buffer[j] + 8), data[i*SIZE + j]);
+        //sleep(1);
+        //exit(0);
+        err++;
+      }
+    }
+  }
+  printf("err = %zu\n", err);
+  printms(INF_TIME_ID);
+  printms(ZIP_TIME_ID);
+}
+
 int main() {
   printf("Welcome to TensorZipper!\n");
 
@@ -97,21 +168,30 @@ int main() {
   // 2. Copy each row over from (flash)
   // 3. Multiply each row to the previous data
   // Inference
+  printf("memPerf...\n"); 
   memPerf();
 
+  printf("memPerf2...\n");  
+  memPerf2();
+
+  /* Disabled due to support only in ZIPLUT2 or below
+   * In order to run at ZIPLUT3, need to modify python compiler
+  */
+  #ifndef ZIPLUT3
   cifar_setup();
   check_weights();
-
+ 
   printf("TensorZipper:\n");
-  for (int i = 0; i < 256; i++) cifar_compressed();
+  for (int i = 0; i < 64; i++) cifar_compressed();
   printms(READ_TIME_ID);
   printms(PROD_TIME_ID);
 
   printf("Baseline:\n");
-  for (int i = 0; i < 256; i++) cifar_normal();
+  for (int i = 0; i < 64; i++) cifar_normal();
   printms(READ_TIME_ID);
   printms(PROD_TIME_ID);
-  
+  #endif
+
   return 0;
 }
 

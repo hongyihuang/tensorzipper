@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=--std=c99 -Wall
+CFLAGS=--std=c99 -Wall -Os
 
 main: ans.o nanotorch.o arch.o
 	$(CC) $(CFLAGS) -o main main.c ans.o nanotorch.o arch.o

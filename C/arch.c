@@ -3,13 +3,14 @@
 //asm volatile("esync; rsr %0,ccount":"=a" (startCounter));
 //asm volatile("esync; rsr %0,ccount":"=a" (endCounter));
 
+//static inline 
 void beginms(size_t n) {
   #ifdef ESP32S3
   uint32_t counter;
   asm volatile("esync; rsr %0,ccount":"=a" (counter));
   TIMER_TMP[n] = counter;
 
-  #elifdef ARDUINO
+  #elif ARDUINO
   TIMER_TMP[n] = millis();
 
   #else
@@ -25,7 +26,7 @@ void endms(size_t n) {
   asm volatile("esync; rsr %0,ccount":"=a" (counter));
   TIMER[n] += counter - TIMER_TMP[n];
 
-  #elifdef ARDUINO
+  #elif ARDUINO
   TIMER[n] += millis() - TIMER_TMP[n];
   
   #else
