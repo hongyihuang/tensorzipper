@@ -7,7 +7,7 @@
 
 #include "ans.h"
 #include "nanotorch.h"
-#ifndef ZIPLUT3
+#if !defined(ZIPLUT3) && !defined(ZIPLUT4)
 #include "cifar-10-fc-runtime.h"
 #endif
 
@@ -27,6 +27,26 @@ File Layout
 - nanotorch: quantized matmul + bias operation
 - ans: compression
 - mnist: data, weights, and helper func (ascii art and uart load)
+*/
+
+/*
+void stats(tzip *file) {
+  size_t bin[16] = {0};
+  uint16_t max = 0;
+  for (size_t i = 257; i < 65536; i++) {
+    size_t curr = i;
+    size_t count = 0;
+
+    while (curr > 256) {
+      count++;
+      curr = file->next_state[curr];
+      if ((count == 5) && (curr > max)) max = curr;
+    }
+    bin[count]++;
+  }
+  printf("Max: %zu\n", max);
+  printf("Bin counts: %zu %zu %zu %zu %zu %zu %zu\n", bin[0], bin[1], bin[2], bin[3], bin[4], bin[5], bin[6]);
+}
 */
 
 void memPerf() {
@@ -103,7 +123,7 @@ void generateWeights(tzip *file, uint8_t *data, size_t size) {
     lfsr += lfsr & 0xFF;
 
     // according to symbol distribution
-    data[i] = file->inv_f[lfsr & 0xF];
+    data[i] = file->inv_f[lfsr & 0xFF];
   }
 }
 
@@ -130,7 +150,10 @@ void memPerf2() {
   printf("Generate Weights\n");
   generateWeights(&file, data, TOTAL_SIZE);
   printf("Compress\n");
-  compress(&file, dist, data, TOTAL_SIZE);
+  compress(&file, data, TOTAL_SIZE);
+
+  //printf("Stats\n");
+  //stats(&file);
 
   printf("File size = %zu\n", file.size);
   size_t err = 0;
@@ -177,7 +200,7 @@ int main() {
   /* Disabled due to support only in ZIPLUT2 or below
    * In order to run at ZIPLUT3, need to modify python compiler
   */
-  #ifndef ZIPLUT3
+  #if !defined(ZIPLUT3) && !defined(ZIPLUT4)
   cifar_setup();
   check_weights();
  

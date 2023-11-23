@@ -18,6 +18,257 @@
 | ARD |?????|?????|?????|
 +-----+-----+-----+-----+
 */
+#if defined(ZIPLUT4)
+size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
+    uint16_t state;
+    int8_t symbol;
+    uint32_t entry;
+    // i: counter of decompressed buffer
+    // j: counter of compressed bitstream
+    size_t i;
+    size_t j;
+
+    const uint8_t *data = file->data;
+    size_t data_size = file->size;
+    uint8_t *inv_f = file->inv_f;
+    uint32_t *next = file->next;
+    size_t chunksize = buf_size>>UNROLL_BITS;
+    uint8_t slot;
+    uint8_t symlen;
+
+    for (size_t n = 0; n < UNROLL; n++) {
+        j = file->ckpt_offset[n];
+        state = file->ckpt_state[n];
+        for (i = 0; i < chunksize-5; i += symlen) {
+            entry = next[state];
+            symlen = entry>>28;
+            
+            buf[i + n*chunksize] = ((int8_t) ((entry) & 0xF)) - 8;
+
+            for (size_t k = 1; k < symlen; k++)
+                buf[i + n*chunksize + k] = ((int8_t) ((entry>>(4*k)) & 0xF)) - 8;
+                        
+            state = (entry >> 20) & 0xFF;
+            state = (state << 8) + data[j++];
+        }
+        //printf("i = %zu, j = %zu, state = %hu\n", i, j, state);
+        
+        for (; i < chunksize; i++) {
+            slot = state;
+            symbol = inv_f[slot];
+
+            state = (state >> 8) * (file->packed_bins[symbol] & 0xFF) + slot - (file->packed_bins[symbol] >> 8);
+
+            buf[i + n*chunksize] = symbol - 8;
+            if ((state < 256) && (j < data_size)) {
+                state = (state << 8) + data[j++];
+            }
+        }
+        
+        file->ckpt_state[n] = state;
+        file->ckpt_offset[n] = j;
+    }
+    
+    /*
+    for (i = 0; i < chunksize; i++) {
+        symbol0 = inv_f[state0 & 0xFF];
+        symbol1 = inv_f[state1 & 0xFF];
+        symbol2 = inv_f[state2 & 0xFF];
+        symbol3 = inv_f[state3 & 0xFF];
+
+        state0 = next_state[state0];
+        state1 = next_state[state1];
+        state2 = next_state[state2];
+        state3 = next_state[state3];
+
+        buf[i] = symbol0 - 8;
+        buf[i + chunksize] = symbol1 - 8;
+        buf[i + 2*chunksize] = symbol2 - 8;
+        buf[i + 3*chunksize] = symbol3 - 8;
+
+        // simplified error checking, as long as it doesn't overflow file->data
+        if ((state0 < 256) && (j0 < data_size)) {
+            state0 = (state0 << 8) + data[j0++];
+        }
+        if ((state1 < 256) && (j1 < data_size)) {
+            state1 = (state1 << 8) + data[j1++];
+        }
+        if ((state2 < 256) && (j2 < data_size)) {
+            state2 = (state2 << 8) + data[j2++];
+        }
+        if ((state3 < 256) && (j3 < data_size)) {
+            state3 = (state3 << 8) + data[j3++];
+        }
+    }
+    
+    // save checkpoint
+    file->ckpt_state[0] = state0;
+    file->ckpt_offset[0] = j0;
+    file->ckpt_state[1] = state1;
+    file->ckpt_offset[1] = j1;
+    file->ckpt_state[2] = state2;
+    file->ckpt_offset[2] = j2;
+    file->ckpt_state[3] = state3;
+    file->ckpt_offset[3] = j3;
+
+    return i;
+    */
+    return i;
+}
+
+void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size) {
+    // {0[8:0], dist[0][8:0]}
+    file->packed_bins[0] = dist[0];
+    uint8_t last_dist = dist[0];
+    uint8_t cumulative = 0;
+    for (size_t k = 1; k < 16; k++) {
+        cumulative += last_dist;
+        last_dist = dist[k];
+        file->packed_bins[k] = last_dist | (cumulative<<8);
+    }
+
+    uint32_t y = 0;
+    for (size_t x = 0; x < 256; x++) {
+        cumulative = file->packed_bins[y] >> 8;
+        if (!((x < cumulative) || (y >= 16))) {
+            y += 1;
+        }
+        file->inv_f[x] = y-1;
+    }
+
+    uint8_t symbol;
+
+    uint8_t dist_reg, cum_reg, slot;
+
+    for (uint32_t i = 0; i < 65536u; i++) {
+        uint16_t state = i;
+        size_t count = 0;
+        uint32_t content = 0;
+
+        while (state >= 256) {
+            slot = state;
+            symbol = file->inv_f[slot];
+            content |= symbol<<(count*4);
+            
+            dist_reg = file->packed_bins[symbol] & 0xFF;
+            cum_reg = file->packed_bins[symbol] >> 8;
+
+            state = (state >> 8) * dist_reg + slot - cum_reg;
+            count++;
+        }
+        if (count > 5) {
+            printf("Error: >5 symbols per state = %zu\n", count);
+            exit(0);
+        }
+
+        content |= count<<28;
+        content |= ((uint32_t)state)<<20;
+        file->next[i] = content;
+    }
+}
+#endif
+#if defined(ZIPLUT3)
+size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
+    uint16_t state0, state1, state2, state3;
+    int8_t symbol0, symbol1, symbol2, symbol3;
+    // i: counter of decompressed buffer
+    // j: counter of compressed bitstream
+    size_t i;
+    size_t j0, j1, j2, j3;
+
+    j0 = file->ckpt_offset[0];
+    j1 = file->ckpt_offset[1];
+    j2 = file->ckpt_offset[2];
+    j3 = file->ckpt_offset[3];
+    state0 = file->ckpt_state[0];
+    state1 = file->ckpt_state[1];
+    state2 = file->ckpt_state[2];
+    state3 = file->ckpt_state[3];
+
+    const uint8_t *data = file->data;
+    size_t data_size = file->size;
+    uint8_t *inv_f = file->inv_f;
+    uint16_t *next_state = file->next_state;
+    size_t chunksize = buf_size>>UNROLL_BITS;
+    
+    for (i = 0; i < chunksize; i++) {
+        symbol0 = inv_f[state0 & 0xFF];
+        symbol1 = inv_f[state1 & 0xFF];
+        symbol2 = inv_f[state2 & 0xFF];
+        symbol3 = inv_f[state3 & 0xFF];
+
+        state0 = next_state[state0];
+        state1 = next_state[state1];
+        state2 = next_state[state2];
+        state3 = next_state[state3];
+
+        buf[i] = symbol0 - 8;
+        buf[i + chunksize] = symbol1 - 8;
+        buf[i + 2*chunksize] = symbol2 - 8;
+        buf[i + 3*chunksize] = symbol3 - 8;
+
+        // simplified error checking, as long as it doesn't overflow file->data
+        if ((state0 < 256) && (j0 < data_size)) {
+            state0 = (state0 << 8) + data[j0++];
+        }
+        if ((state1 < 256) && (j1 < data_size)) {
+            state1 = (state1 << 8) + data[j1++];
+        }
+        if ((state2 < 256) && (j2 < data_size)) {
+            state2 = (state2 << 8) + data[j2++];
+        }
+        if ((state3 < 256) && (j3 < data_size)) {
+            state3 = (state3 << 8) + data[j3++];
+        }
+    }
+    
+    // save checkpoint
+    file->ckpt_state[0] = state0;
+    file->ckpt_offset[0] = j0;
+    file->ckpt_state[1] = state1;
+    file->ckpt_offset[1] = j1;
+    file->ckpt_state[2] = state2;
+    file->ckpt_offset[2] = j2;
+    file->ckpt_state[3] = state3;
+    file->ckpt_offset[3] = j3;
+
+    return i;
+}
+
+void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size) {
+    // {0[8:0], dist[0][8:0]}
+    file->packed_bins[0] = dist[0];
+    uint8_t last_dist = dist[0];
+    uint8_t cumulative = 0;
+    for (size_t k = 1; k < 16; k++) {
+        cumulative += last_dist;
+        last_dist = dist[k];
+        file->packed_bins[k] = last_dist | (cumulative<<8);
+    }
+
+    uint32_t y = 0;
+    for (size_t x = 0; x < 256; x++) {
+        cumulative = file->packed_bins[y] >> 8;
+        if (!((x < cumulative) || (y >= 16))) {
+            y += 1;
+        }
+        file->inv_f[x] = y-1;
+    }
+
+    uint8_t symbol;
+
+    uint8_t dist_reg, cum_reg, slot;
+
+    for (uint32_t state = 256; state < 65536u; state++) {
+        slot = state;
+        symbol = file->inv_f[slot];
+        dist_reg = file->packed_bins[symbol] & 0xFF;
+        cum_reg = file->packed_bins[symbol] >> 8;
+
+        file->next_state[state] = (state >> 8) * dist_reg + slot - cum_reg;
+    }
+}
+#endif
 
 #if defined(ZIPLUT2)
 size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
@@ -309,108 +560,7 @@ void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size
 }
 #endif
 
-#if defined(ZIPLUT3)
-size_t unzip(tzip* file, int8_t* buf, size_t buf_size) {
-    uint16_t state0, state1, state2, state3;
-    int8_t symbol0, symbol1, symbol2, symbol3;
-    // i: counter of decompressed buffer
-    // j: counter of compressed bitstream
-    size_t i;
-    size_t j0, j1, j2, j3;
-
-    j0 = file->ckpt_offset[0];
-    j1 = file->ckpt_offset[1];
-    j2 = file->ckpt_offset[2];
-    j3 = file->ckpt_offset[3];
-    state0 = file->ckpt_state[0];
-    state1 = file->ckpt_state[1];
-    state2 = file->ckpt_state[2];
-    state3 = file->ckpt_state[3];
-
-    const uint8_t *data = file->data;
-    size_t data_size = file->size;
-    uint8_t *inv_f = file->inv_f;
-    uint16_t *next_state = file->next_state;
-    size_t chunksize = buf_size>>UNROLL_BITS;
-    
-    for (i = 0; i < chunksize; i++) {
-        symbol0 = inv_f[state0 & 0xFF];
-        symbol1 = inv_f[state1 & 0xFF];
-        symbol2 = inv_f[state2 & 0xFF];
-        symbol3 = inv_f[state3 & 0xFF];
-
-        state0 = next_state[state0];
-        state1 = next_state[state1];
-        state2 = next_state[state2];
-        state3 = next_state[state3];
-
-        buf[i] = symbol0 - 8;
-        buf[i + chunksize] = symbol1 - 8;
-        buf[i + 2*chunksize] = symbol2 - 8;
-        buf[i + 3*chunksize] = symbol3 - 8;
-
-        // simplified error checking, as long as it doesn't overflow file->data
-        if ((state0 < 256) && (j0 < data_size)) {
-            state0 = (state0 << 8) + data[j0++];
-        }
-        if ((state1 < 256) && (j1 < data_size)) {
-            state1 = (state1 << 8) + data[j1++];
-        }
-        if ((state2 < 256) && (j2 < data_size)) {
-            state2 = (state2 << 8) + data[j2++];
-        }
-        if ((state3 < 256) && (j3 < data_size)) {
-            state3 = (state3 << 8) + data[j3++];
-        }
-    }
-    
-    // save checkpoint
-    file->ckpt_state[0] = state0;
-    file->ckpt_offset[0] = j0;
-    file->ckpt_state[1] = state1;
-    file->ckpt_offset[1] = j1;
-    file->ckpt_state[2] = state2;
-    file->ckpt_offset[2] = j2;
-    file->ckpt_state[3] = state3;
-    file->ckpt_offset[3] = j3;
-
-    return i;
-}
-
-void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size) {
-    // {0[8:0], dist[0][8:0]}
-    file->packed_bins[0] = dist[0];
-    uint8_t last_dist = dist[0];
-    uint8_t cumulative = 0;
-    for (size_t k = 1; k < 16; k++) {
-        cumulative += last_dist;
-        last_dist = dist[k];
-        file->packed_bins[k] = last_dist | (cumulative<<8);
-    }
-
-    uint32_t y = 0;
-    for (size_t x = 0; x < 256; x++) {
-        cumulative = file->packed_bins[y] >> 8;
-        if (!((x < cumulative) || (y >= 16))) {
-            y += 1;
-        }
-        file->inv_f[x] = y-1;
-    }
-
-    uint8_t symbol;
-
-    uint8_t dist_reg, cum_reg, slot;
-
-    for (uint32_t state = 256; state < 65536u; state++) {
-        slot = state;
-        symbol = file->inv_f[slot];
-        dist_reg = file->packed_bins[symbol] & 0xFF;
-        cum_reg = file->packed_bins[symbol] >> 8;
-
-        file->next_state[state] = (state >> 8) * dist_reg + slot - cum_reg;
-    }
-}
-
+#if defined(ZIPLUT3) || defined(ZIPLUT4)
 /*
 repeatedly call to unzip the file into buffer
 Returns size of inflated buffer size
@@ -443,83 +593,7 @@ size_t inflateInt8_to_8(tzip* file, int8_t* buf, size_t max_size) {
     file->ckpt_offset[0] += till;
     return till;
 }
-
-/* Generates a compressed bitstream for benchmarking. */
-void compress(tzip *file, uint8_t *dist, uint8_t *weights, size_t size) {
-    uint8_t *data = malloc(size);
-    if (data == NULL) {
-        printf("generate: malloc data failed!");
-        exit(0);
-    }
-
-    uint32_t state = 256;
-    uint8_t symbol;
-    size_t j = 0;
-    //size_t tot = 0;
-
-    // loop over in zigzag order
-    printf("Encoding...\n");
-    // loop over n thread-blocks
-    for (size_t i = 0; i < UNROLL; i++) {
-        uint8_t *weights_ptr = weights + size - 1 - i*(file->rows>>UNROLL_BITS);
-        //loop over the block
-        for (size_t k = 0; k < (size>>UNROLL_BITS)/(file->rows>>UNROLL_BITS); k++) {
-            // loop over one row of zigzag pattern
-            for (size_t l = 0; l < file->rows>>UNROLL_BITS; l++) {
-                symbol = *(weights_ptr--); // reversed read in
-                while (state >= (dist[symbol]<<8)) {
-                    data[j++] = state & 0xFF;
-                    state = state >> 8;
-                }
-                state = ((state/dist[symbol])<<8) + (file->packed_bins[symbol] >> 8) + (state % dist[symbol]); 
-                //tot++;
-            }
-            // decrement by stride
-            weights_ptr -= (file->rows>>UNROLL_BITS) * (UNROLL-1);
-        }
-        // save the ckpt state and offset
-        file->ckpt_offset_init[i] = j;
-        file->ckpt_state_init[i] = state;
-        //printf("j = %zu, state = %u\n", j, state);
-    }
-
-    //printf("tot = %zu\n", tot);
-
-    // reverse the buffer by allocating another buffer and reverse it... 
-    printf("Reversing...\n");
-    uint8_t *data_rev = malloc(j);
-    if (data_rev == NULL) {
-        printf("generate: malloc data_rev failed!");
-        exit(0);
-    }
-    // inverting data block
-    for (size_t i = 0; i < j; i++) {
-        data_rev[j-1-i] = data[i];
-    }
-
-    file->size = j;
-    file->data = data_rev;
-    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
-
-    // invert checkpoint offset coordinates and swap them
-    for (size_t i = 0; i < UNROLL; i++) {
-        file->ckpt_offset[UNROLL-1-i] = j - file->ckpt_offset_init[i];
-        file->ckpt_state[UNROLL-1-i] = file->ckpt_state_init[i];
-    }
-    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state[i], file->ckpt_offset[i]);
-    for (size_t i = 0; i < UNROLL; i++) {
-        file->ckpt_state_init[i] = file->ckpt_state[i];
-        file->ckpt_offset_init[i] = file->ckpt_offset[i];
-    }
-    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
-    
-    free(data);
-}
 #else
-/*
-repeatedly call to unzip the file into buffer
-Returns size of deflated buffer size
-*/
 size_t inflateInt4_to_8(tzip* file, int8_t* buf, size_t max_size) {
     size_t till = MIN(max_size>>1, file->size-file->ckpt_offset);
 
@@ -554,7 +628,9 @@ size_t inflateInt8_to_8(tzip* file, int8_t* buf, size_t max_size) {
     file->ckpt_offset += till;
     return till;
 }
+#endif
 
+#ifdef ZIPLUT1
 /* Generates a compressed bitstream for benchmarking. */
 void compress(tzip *file, uint8_t *dist, uint8_t *weights, size_t size) {
     uint8_t *data = malloc(size);
@@ -607,6 +683,79 @@ void compress(tzip *file, uint8_t *dist, uint8_t *weights, size_t size) {
 
     file->ckpt_offset = 3;
     //file->ckpt_state = (data[0] << 16) + (data[1] << 8) + data[2];
+    free(data);
+}
+#else
+/* Generates a compressed bitstream for benchmarking. */
+void compress(tzip *file, uint8_t *weights, size_t size) {
+    uint8_t *data = malloc(size);
+    if (data == NULL) {
+        printf("generate: malloc data failed!");
+        exit(0);
+    }
+
+    uint32_t state = 256;
+    uint8_t symbol;
+    size_t j = 0;
+    //size_t tot = 0;
+
+    // loop over in zigzag order
+    printf("Encoding...\n");
+    // loop over n thread-blocks
+    for (size_t i = 0; i < UNROLL; i++) {
+        uint8_t *weights_ptr = weights + size - 1 - i*(file->rows>>UNROLL_BITS);
+        //loop over the block
+        for (size_t k = 0; k < (size>>UNROLL_BITS)/(file->rows>>UNROLL_BITS); k++) {
+            // loop over one row of zigzag pattern
+            for (size_t l = 0; l < file->rows>>UNROLL_BITS; l++) {
+                symbol = *(weights_ptr--); // reversed read in
+                uint8_t dist_reg = file->packed_bins[symbol] & 0xFF;
+                while (state >= (dist_reg<<8)) {
+                    data[j++] = state & 0xFF;
+                    state = state >> 8;
+                }
+                state = ((state/dist_reg)<<8) + (file->packed_bins[symbol] >> 8) + (state % dist_reg); 
+                //tot++;
+            }
+            // decrement by stride
+            weights_ptr -= (file->rows>>UNROLL_BITS) * (UNROLL-1);
+        }
+        // save the ckpt state and offset
+        file->ckpt_offset_init[i] = j;
+        file->ckpt_state_init[i] = state;
+        //printf("j = %zu, state = %u\n", j, state);
+    }
+
+    //printf("tot = %zu\n", tot);
+
+    // reverse the buffer by allocating another buffer and reverse it... 
+    printf("Reversing...\n");
+    uint8_t *data_rev = malloc(j);
+    if (data_rev == NULL) {
+        printf("generate: malloc data_rev failed!");
+        exit(0);
+    }
+    // inverting data block
+    for (size_t i = 0; i < j; i++) {
+        data_rev[j-1-i] = data[i];
+    }
+
+    file->size = j;
+    file->data = data_rev;
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
+
+    // invert checkpoint offset coordinates and swap them
+    for (size_t i = 0; i < UNROLL; i++) {
+        file->ckpt_offset[UNROLL-1-i] = j - file->ckpt_offset_init[i];
+        file->ckpt_state[UNROLL-1-i] = file->ckpt_state_init[i];
+    }
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state[i], file->ckpt_offset[i]);
+    for (size_t i = 0; i < UNROLL; i++) {
+        file->ckpt_state_init[i] = file->ckpt_state[i];
+        file->ckpt_offset_init[i] = file->ckpt_offset[i];
+    }
+    //for (size_t i = 0; i < UNROLL; i++) printf( "i = %zu, state = %hu, offset = %zu\n", i, file->ckpt_state_init[i], file->ckpt_offset_init[i]);
+    
     free(data);
 }
 #endif

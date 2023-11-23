@@ -3,6 +3,31 @@
 #include <stdlib.h>
 #include "arch.h"
 
+#if defined(ZIPLUT4)
+// UNROLL cannot be changed without changing code unrolling
+#define UNROLL 4
+#define UNROLL_BITS 2
+// threads can be changed, it will generate more theads
+// on embedded this is limited to how many physical cores there is
+#define THREADS 1
+
+typedef struct {
+    const uint8_t *data; // [size]
+    size_t size;
+    size_t rows;
+
+    size_t ckpt_offset[THREADS*UNROLL];
+    uint16_t ckpt_state[THREADS*UNROLL];
+
+    size_t ckpt_offset_init[THREADS*UNROLL];
+    uint16_t ckpt_state_init[THREADS*UNROLL];
+
+    uint16_t packed_bins[16]; // 32B (for compression)
+    // 4 bit length, 8 bit state, 5x 4 bit symbol
+    uint32_t next[65536]; // 256KB (for decompression)
+    uint8_t inv_f[256]; // 0.25KB
+} tzip;
+#endif
 #if defined(ZIPLUT3)
 // UNROLL cannot be changed without changing code unrolling
 #define UNROLL 4
@@ -85,5 +110,5 @@ size_t unzip(tzip* file, int8_t* buf, size_t buf_size);
 
 void init_tzip(tzip *file, const uint8_t *data, const uint8_t *dist, size_t size);
 
-void compress(tzip *file, uint8_t *dist, uint8_t *data, size_t size);
+void compress(tzip *file, uint8_t *data, size_t size);
 #endif
